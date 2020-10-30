@@ -29,7 +29,6 @@ TODO:
 const SpreadsheetID string = "1HRfK4yZERLWd-OcDZ8pJRirdzdkHln3SUtIfyGZEjNk"
 
 func main() {
-
 	var wg sync.WaitGroup
 
 	// Make the base roster from Google Classroom Data and wait for it to finish, since further functions depend on this data.
@@ -77,7 +76,6 @@ func makeBaseRoster(wg *sync.WaitGroup) {
 	for _, course := range courses {
 		students := stu.List(client, course.Id)
 		for _, s := range students {
-			/* fmt.Println(s.First, s.Last, s.CourseId) */
 			gradeLevel := switchGradeLevel(course.Name)
 			values[counter] = []interface{}{s.First, s.Last, s.Email, course.Name, gradeLevel, s.Id, course.Id}
 
@@ -95,21 +93,13 @@ func makeBaseRoster(wg *sync.WaitGroup) {
 	sh.BatchUpdate(client, SpreadsheetID, "Master!A2:G", "ROWS", values)
 
 	inClassroom := make([]string, len(values), len(values))
-	/*     inClassroom := []string{}
-	 *
-	 *     for c, _ := range values {
-	 *         if c == 0 {
-	 *             fmt.Println("\n")
-	 *         }
-	 *         inClassroom = append(inClassroom, "")
-	 *     } */
 
 	x := make([]interface{}, len(inClassroom))
 	for i, v := range inClassroom {
 		x[i] = v
 	}
 
-	// Clear columns
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
 	clearColumn("Master!M2:M")
 
 	// Write FALSE to cells corresponding with students who are NOT on the Google Classroom roster
@@ -137,35 +127,20 @@ func makeFormattedNames(wg *sync.WaitGroup) {
 		lastName := name[1].(string)
 
 		lastCommaFirst := lastName + ", " + firstName
-		firstLast := firstName + "" + lastName
-		myIDFormat := strings.ToLower(lastName) + firstName
+		firstLast := firstName + " " + lastName
+		myIDFormat := strings.ToLower(lastName) + strings.Split(firstName, " ")[0]
 
 		payload1 = append(payload1, lastCommaFirst)
 		payload2 = append(payload2, firstLast)
 		payload3 = append(payload3, myIDFormat)
 	}
-	// TODO update names in correct format
-
-	// Convert back to interface
-	/* s := make([]interface{}, len(payload1))
-	 * for i, v := range payload1 {
-	 *     s[i] = v
-	 * } */
-	/* t := make([]interface{}, len(payload2))
-	 * for i, v := range payload2 {
-	 *     t[i] = v
-	 * }
-	 * u := make([]interface{}, len(payload3))
-	 * for i, v := range payload3 {
-	 *     u[i] = v
-	 * } */
 
 	// Convert them back to interfaces
 	s := toInterface(&payload1)
 	t := toInterface(&payload2)
 	u := toInterface(&payload3)
 
-	// Clear columns
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
 	clearColumn("Master!O2:O")
 	clearColumn("Master!P2:P")
 	clearColumn("Master!Q2:Q")
@@ -207,53 +182,40 @@ func checkInSunguard(wg *sync.WaitGroup) {
 			payload = append(payload, firstCommaLast)
 		}
 	}
-	// Convert back to interface
-	s := make([]interface{}, len(payload))
-	for i, v := range payload {
-		s[i] = v
-	}
 
-	// Clear columns
-	clearColumn(readRange)
-
-	// Posting cleaned names to sheet
-	sh.Update(client, SpreadsheetID, readRange, "COLUMNS", s)
-
-	payload2 := []string{}
 	// Removing commas and spaces
-	for _, name := range payload {
+	for n, name := range payload {
 		nameSplit := strings.SplitAfter(name, ",")
 		nameSplit[0] = strings.TrimRight(nameSplit[0], ",")
 		nameSplit[0] = strings.TrimSpace(nameSplit[0])
 		nameSplit[0] = strings.ToLower(nameSplit[0])
 		nameSplit[1] = strings.TrimSpace(nameSplit[1])
+		nameSplit[1] = strings.Split(nameSplit[1], " ")[0]
 
-		payload2 = append(payload2, nameSplit[0]+nameSplit[1])
+		payload[n] = nameSplit[0] + nameSplit[1]
 	}
+
 	// Convert back to interface
-	t := make([]interface{}, len(payload2))
-	for i, v := range payload2 {
-		t[i] = v
-	}
+	s := toInterface(&payload)
 
-	// Clear columns
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
 	clearColumn("Sunguard Paste!E2:E")
 
 	// Adding myIDFormat values to "SunguardPaste!E:E"
-	sh.Update(client, SpreadsheetID, "Sunguard Paste!E2:E", "COLUMNS", t)
+	sh.Update(client, SpreadsheetID, "Sunguard Paste!E2:E", "COLUMNS", s)
 
 	// Post TRUE to correct cell if myIDFormats match
 	masterMyCustomIDs := sh.Get(client, SpreadsheetID, "Master!Q2:Q")
 	cusIDAndSID := sh.Get(client, SpreadsheetID, "Sunguard Paste!B2:E")
 
+	payload2 := []string{}
 	payload3 := []string{}
-	payload4 := []string{}
 
 	for _, mID := range masterMyCustomIDs {
 		foundMatch := false
 		foundMatchIndex := 0
 
-		for sID, scID := range payload2 {
+		for sID, scID := range payload {
 			if mID[0].(string) == scID {
 				foundMatch = true
 				foundMatchIndex = sID
@@ -262,12 +224,17 @@ func checkInSunguard(wg *sync.WaitGroup) {
 		}
 
 		if foundMatch == true {
-			payload3 = append(payload3, "")
-			payload4 = append(payload4, cusIDAndSID[foundMatchIndex][0].(string))
+			payload2 = append(payload2, "")
+			payload3 = append(payload3, cusIDAndSID[foundMatchIndex][0].(string))
 		} else {
-			payload3 = append(payload3, "FALSE")
-			payload4 = append(payload4, "")
+			payload2 = append(payload2, "FALSE")
+			payload3 = append(payload3, "")
 		}
+	}
+
+	t := make([]interface{}, len(payload2))
+	for i, v := range payload2 {
+		t[i] = v
 	}
 
 	u := make([]interface{}, len(payload3))
@@ -275,19 +242,14 @@ func checkInSunguard(wg *sync.WaitGroup) {
 		u[i] = v
 	}
 
-	a := make([]interface{}, len(payload4))
-	for i, v := range payload4 {
-		a[i] = v
-	}
-
-	// Clear columns
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
 	clearColumn("Master!K2:K")
 	clearColumn("Master!H2:H")
 
 	// Post FALSE if a student is not found on the Sunguard list
-	sh.Update(client, SpreadsheetID, "Master!K2:K", "COLUMNS", u)
+	sh.Update(client, SpreadsheetID, "Master!K2:K", "COLUMNS", t)
 	// Post Sunguard IDs
-	sh.Update(client, SpreadsheetID, "Master!H2:H", "COLUMNS", a)
+	sh.Update(client, SpreadsheetID, "Master!H2:H", "COLUMNS", u)
 
 	fmt.Println("Done checking if students are in the Sunguard List.")
 }
@@ -298,11 +260,9 @@ func checkInAPEX(wg *sync.WaitGroup) {
 	// Get Google Client
 	client := auth.Authorize()
 	// Get the pasted in values from Sunguard
-	/* readRange := "APEX Paste!A2:B" */
 	firstNameRange := "APEX Paste!A2:A"
 	lastNameRange := "APEX Paste!B2:B"
 
-	/* vals := sh.Get(client, SpreadsheetID, readRange) */
 	firstNames := sh.Get(client, SpreadsheetID, firstNameRange)
 	lastNames := sh.Get(client, SpreadsheetID, lastNameRange)
 
@@ -312,14 +272,13 @@ func checkInAPEX(wg *sync.WaitGroup) {
 	for n, name := range firstNames {
 		ln := strings.ToLower(lastNames[n][0].(string))
 
-		payload = append(payload, ln+name[0].(string))
+		payload = append(payload, ln+strings.Split(name[0].(string), " ")[0])
 	}
+
 	// Convert back to interface
-	t := make([]interface{}, len(payload))
-	for i, v := range payload {
-		t[i] = v
-	}
-	// Clear columns
+	t := toInterface(&payload)
+
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
 	clearColumn("APEX Paste!E2:E")
 	// Adding myIDFormat values to "APEX Paste!E:E"
 	sh.Update(client, SpreadsheetID, "APEX Paste!E2:E", "COLUMNS", t)
@@ -350,7 +309,7 @@ func checkInAPEX(wg *sync.WaitGroup) {
 		u[i] = v
 	}
 
-	// Clear columns
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
 	clearColumn("Master!L2:L")
 
 	// Post False if the student is not found in the APEX list
@@ -373,23 +332,18 @@ func checkInIEP(wg *sync.WaitGroup) {
 
 	// Removing commas and spaces
 	for _, name := range vals {
-		/* nameSplit := strings.Split(name[0].(string), ",") */
 
 		ln := strings.TrimSpace(strings.Split(name[0].(string), ",")[0])
 		fn := strings.TrimSpace(strings.Split(name[0].(string), ",")[1])
-		/* ln := strings.TrimSpace(nameSplit[0]) */
-		/* fn := strings.TrimSpace(nameSplit[1]) */
 		myIDFormat := strings.ToLower(ln) + fn
 
 		payload = append(payload, myIDFormat)
 	}
-	// Convert back to interface
-	s := make([]interface{}, len(payload))
-	for i, v := range payload {
-		s[i] = v
-	}
 
-	// Clear columns
+	// Convert back to interface
+	s := toInterface(&payload)
+
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
 	clearColumn("IEP Paste!S10:S")
 
 	// Adding myIDFormat values to range
@@ -420,7 +374,7 @@ func checkInIEP(wg *sync.WaitGroup) {
 		t[i] = v
 	}
 
-	// Clear columns
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
 	clearColumn("Master!J2:J")
 
 	// Post TRUE to cells corresponging with students who have an IEP
@@ -446,19 +400,11 @@ func clearColumn(writeRange string) {
 	// Get Google Client
 	client := auth.Authorize()
 	vals := sh.Get(client, SpreadsheetID, writeRange)
-	/* payload := []string{} */
 
 	payload := make([]string, len(vals), len(vals))
-	/* // Create a blank set of cells
-	 * for _, row := range vals {
-	 *     payload = append(payload, "")
-	 * } */
 
 	// Convert back to interface
-	t := make([]interface{}, len(payload))
-	for i, v := range payload {
-		t[i] = v
-	}
+	t := toInterface(&payload)
 
 	// Clearning the cells
 	sh.Update(client, SpreadsheetID, writeRange, "COLUMNS", t)
