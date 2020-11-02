@@ -24,6 +24,7 @@ TODO:
 - Add Clear Cells function to goSheets
 - Add Parent Emails
 - Add Date Added column
+- Remove students from IEP List if they are not in main roster
 */
 
 const SpreadsheetID string = "1HRfK4yZERLWd-OcDZ8pJRirdzdkHln3SUtIfyGZEjNk"
@@ -77,9 +78,11 @@ func makeBaseRoster(wg *sync.WaitGroup) {
 		students := stu.List(client, course.Id)
 		for _, s := range students {
 			gradeLevel := switchGradeLevel(course.Name)
-			values[counter] = []interface{}{s.First, s.Last, s.Email, course.Name, gradeLevel, s.Id, course.Id}
+			if course.Name != "Test Class" {
+				values[counter] = []interface{}{s.First, s.Last, s.Email, course.Name, gradeLevel, s.Id, course.Id}
 
-			counter++
+				counter++
+			}
 		}
 	}
 	// Make a blank set of data to use to overwrite the old data (This could probably be done a lot cleaner)
@@ -325,7 +328,7 @@ func checkInIEP(wg *sync.WaitGroup) {
 	// Get Google Client
 	client := auth.Authorize()
 
-	readRange := "IEP Paste!B10:B"
+	readRange := "IEP List!B10:B"
 	vals := sh.Get(client, SpreadsheetID, readRange)
 
 	payload := []string{}
@@ -344,10 +347,10 @@ func checkInIEP(wg *sync.WaitGroup) {
 	s := toInterface(&payload)
 
 	// Clear columns.  If range is blank, will output "No Data Found." to the console
-	clearColumn("IEP Paste!S10:S")
+	clearColumn("IEP List!S10:S")
 
 	// Adding myIDFormat values to range
-	sh.Update(client, SpreadsheetID, "IEP Paste!S10:S", "COLUMNS", s)
+	sh.Update(client, SpreadsheetID, "IEP List!S10:S", "COLUMNS", s)
 
 	masterMyCustomIDs := sh.Get(client, SpreadsheetID, "Master!Q2:Q")
 
