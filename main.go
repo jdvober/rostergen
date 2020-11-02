@@ -27,6 +27,7 @@ TODO:
 - Remove students from IEP List if they are not in main roster
 */
 
+// SpreadsheetID is the id of the spreadsheet of the Master Roster
 const SpreadsheetID string = "1HRfK4yZERLWd-OcDZ8pJRirdzdkHln3SUtIfyGZEjNk"
 
 func main() {
@@ -420,3 +421,35 @@ func toInterface(payload *[]string) []interface{} {
 	}
 	return s
 }
+
+func addSunguard(wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Println("Adding students from Sunguard list who are not in Classroom...")
+	// Get Google Client
+	client := auth.Authorize()
+	// Get the pasted in values from Sunguard
+	readRange := "Sunguard Paste!E2:E"
+	sunCusIDS := sh.Get(client, SpreadsheetID, readRange)
+
+	// Post TRUE to correct cell if myIDFormats match
+	masterMyCustomIDs := sh.Get(client, SpreadsheetID, "Master!Q2:Q")
+
+	payload := []string{}
+
+	for _, sID := range sunCusIDS {
+		foundMatch := false
+		for _, mID := range masterMyCustomIDs {
+			if mID[0].(string) == sID {
+				foundMatch = true
+				break
+			}
+		}
+
+		if foundMatch == false {
+			payload = append(payload, sID.(string))
+		}
+	}
+
+}
+
+// EOF
