@@ -1,0 +1,480 @@
+package mainbak
+
+import (
+	"fmt"
+	"strings"
+	"sync"
+	"unicode"
+
+	co "github.com/jdvober/goClassroomTools/courses"
+	"github.com/jdvober/goClassroomTools/students"
+	stu "github.com/jdvober/goClassroomTools/students"
+	auth "github.com/jdvober/goGoogleAuth"
+	sh "github.com/jdvober/goSheets/values"
+)
+
+/*
+TODO:
+- Check that the sheets actually exist, and if they don't, make them.
+- Add students from APEX and Sunguard that are not in the Google Classroom Roster
+- Make a "TO DO" list for adding students to classroom, contacts etc.
+- Need to add error checking
+- Google Classroom Gradebook Integration
+- Add Convert Back To Interface function to goSheets
+- Add Clear Cells function to goSheets
+- Add Parent Emails
+- Add Date Added column
+- Remove students from IEP List if they are not in main roster
+*/
+
+// SpreadsheetID is the id of the spreadsheet of the Master Roster
+const SpreadsheetID string = "1HRfK4yZERLWd-OcDZ8pJRirdzdkHln3SUtIfyGZEjNk"
+
+// changed from main
+func run() {
+	var wg sync.WaitGroup
+	// Make the base roster from Google Classroom Data and wait for it to finish, since further functions depend on this data.
+	wg.Add(1)
+	go makeBaseRoster(&wg)
+	wg.Wait()
+
+	// Make a list of formatted names and post
+	wg.Add(1)
+	go makeFormattedNames(&wg)
+	wg.Wait()
+
+	// Finish Roster
+	wg.Add(1)
+	go addSunguard(&wg)
+	wg.Wait()
+
+	// Run concurrent tasks
+	wg.Add(1)
+	go checkInSunguard(&wg)
+	wg.Add(1)
+	go checkInAPEX(&wg)
+	wg.Add(1)
+	go checkInIEP(&wg)
+	wg.Wait()
+
+	fmt.Println("Finished.")
+}
+
+func makeBaseRoster(wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Println("Making Base Roster...")
+	client := auth.Authorize()
+	courses := co.List(client)
+	var studentProfiles []students.Profile
+
+	for _, course := range courses {
+		studentList := stu.List(client, course.Id) // CourseId Email Id First Last
+		for _, student := range studentList {
+
+			studentProfiles = append(studentProfiles, student)
+		}
+	}
+
+	// Get all courses
+	values := make([][]interface{}, len(studentProfiles))
+	/* valuesBlank := make([][]interface{}, 300) */
+
+	counter := 0
+	for _, course := range courses {
+		students := stu.List(client, course.Id)
+		for _, s := range students {
+			gradeLevel := switchGradeLevel(course.Name)
+			if course.Name != "Test Class" {
+				values[counter] = []interface{}{s.First, s.Last, s.Email, course.Name, gradeLevel, s.Id, course.Id}
+
+				counter++
+			}
+		}
+	}
+
+	// Clear the sheet
+	sh.Clear(client, SpreadsheetID, "Master!A2:ZZZ", "COLUMNS")
+
+	// Write new roster
+	sh.BatchUpdate(client, SpreadsheetID, "Master!A2:G", "ROWS", values)
+
+	inClassroom := make([]string, len(values), len(values))
+
+	x := make([]interface{}, len(inClassroom))
+	for i, v := range inClassroom {
+		x[i] = v
+	}
+
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
+	clearColumn("Master!M2:M")
+
+	// Write FALSE to cells corresponding with students who are NOT on the Google Classroom roster
+	sh.Update(client, SpreadsheetID, "Master!M2:M", "COLUMNS", x)
+
+	fmt.Println("Done making Base Roster.")
+}
+
+func makeFormattedNames(wg *sync.WaitGroup) {
+	defer wg.Done()
+	// TODO getColumn()
+
+	// Get Google Client
+	client := auth.Authorize()
+	// Get the names from the master roster's first two columns
+	readRange := "Master!A2:B"
+	vals := sh.Get(client, SpreadsheetID, readRange)
+
+	payload1 := []string{}
+	payload2 := []string{}
+	payload3 := []string{}
+
+	for _, name := range vals {
+		firstName := name[0].(string)
+		lastName := name[1].(string)
+
+		lastCommaFirst := lastName + ", " + firstName
+		firstLast := firstName + " " + lastName
+		myIDFormat := strings.ToLower(lastName) + strings.Split(firstName, " ")[0]
+
+		payload1 = append(payload1, lastCommaFirst)
+		payload2 = append(payload2, firstLast)
+		payload3 = append(payload3, myIDFormat)
+	}
+
+	// Convert them back to interfaces
+	s := toInterface(&payload1)
+	t := toInterface(&payload2)
+	u := toInterface(&payload3)
+
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
+	clearColumn("Master!O2:O")
+	clearColumn("Master!P2:P")
+	clearColumn("Master!Q2:Q")
+
+	// Write Last, First
+	sh.Update(client, SpreadsheetID, "Master!O2", "COLUMNS", s)
+	// Write First Last
+	sh.Update(client, SpreadsheetID, "Master!P2", "COLUMNS", t)
+	// Write masterMyCustomIDs
+	sh.Update(client, SpreadsheetID, "Master!Q2", "COLUMNS", u)
+	fmt.Println("Done writing Formatted Names to sheet.")
+}
+
+func checkInSunguard(wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Println("Checking if students are in the Sunguard List..")
+	// Get Google Client
+	client := auth.Authorize()
+	// Get the pasted in values from Sunguard
+	readRange := "Sunguard Paste!A2:A"
+	vals := sh.Get(client, SpreadsheetID, readRange)
+	payload := []string{}
+
+	for _, name := range vals {
+		fullName := name[0].(string)
+		// Check to make sure the middle name has not already been removed
+		if strings.Count(fullName, "") > 1 {
+			firstCommaLast := strings.TrimRightFunc(fullName, func(run rune) bool {
+				return unicode.IsLetter(run)
+			})
+			firstCommaLast = strings.TrimRightFunc(firstCommaLast, func(run rune) bool {
+				return unicode.IsSpace(run)
+			})
+			// Use type assertion to make interface {} be used as string.  This relies on the data always being a string.
+			payload = append(payload, firstCommaLast)
+		} else {
+			firstCommaLast := fullName
+			// Use type assertion to make interface {} be used as string.  This relies on the data always being a string.
+			payload = append(payload, firstCommaLast)
+		}
+	}
+
+	// Removing commas and spaces
+	for n, name := range payload {
+		nameSplit := strings.SplitAfter(name, ",")
+		nameSplit[0] = strings.TrimRight(nameSplit[0], ",")
+		nameSplit[0] = strings.TrimSpace(nameSplit[0])
+		nameSplit[0] = strings.ToLower(nameSplit[0])
+		nameSplit[1] = strings.TrimSpace(nameSplit[1])
+		nameSplit[1] = strings.Split(nameSplit[1], " ")[0]
+
+		payload[n] = nameSplit[0] + nameSplit[1]
+	}
+
+	// Convert back to interface
+	s := toInterface(&payload)
+
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
+	clearColumn("Sunguard Paste!E2:E")
+
+	// Adding myIDFormat values to "SunguardPaste!E:E"
+	sh.Update(client, SpreadsheetID, "Sunguard Paste!E2:E", "COLUMNS", s)
+
+	// Post TRUE to correct cell if myIDFormats match
+	masterMyCustomIDs := sh.Get(client, SpreadsheetID, "Master!Q2:Q")
+	cusIDAndSID := sh.Get(client, SpreadsheetID, "Sunguard Paste!B2:E")
+
+	payload2 := []string{}
+	payload3 := []string{}
+
+	for _, mID := range masterMyCustomIDs {
+		foundMatch := false
+		foundMatchIndex := 0
+
+		for sID, scID := range payload {
+			if mID[0].(string) == scID {
+				foundMatch = true
+				foundMatchIndex = sID
+				break
+			}
+		}
+
+		if foundMatch == true {
+			payload2 = append(payload2, "")
+			payload3 = append(payload3, cusIDAndSID[foundMatchIndex][0].(string))
+		} else {
+			payload2 = append(payload2, "FALSE")
+			payload3 = append(payload3, "")
+		}
+	}
+
+	t := make([]interface{}, len(payload2))
+	for i, v := range payload2 {
+		t[i] = v
+	}
+
+	u := make([]interface{}, len(payload3))
+	for i, v := range payload3 {
+		u[i] = v
+	}
+
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
+	clearColumn("Master!K2:K")
+	clearColumn("Master!H2:H")
+
+	// Post FALSE if a student is not found on the Sunguard list
+	sh.Update(client, SpreadsheetID, "Master!K2:K", "COLUMNS", t)
+	// Post Sunguard IDs
+	sh.Update(client, SpreadsheetID, "Master!H2:H", "COLUMNS", u)
+
+	fmt.Println("Done checking if students are in the Sunguard List.")
+}
+
+func checkInAPEX(wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Println("Checking if students are in the APEX List..")
+	// Get Google Client
+	client := auth.Authorize()
+	// Get the pasted in values from Sunguard
+	firstNameRange := "APEX Paste!A2:A"
+	lastNameRange := "APEX Paste!B2:B"
+
+	firstNames := sh.Get(client, SpreadsheetID, firstNameRange)
+	lastNames := sh.Get(client, SpreadsheetID, lastNameRange)
+
+	payload := []string{}
+
+	// Removing commas and spaces
+	for n, name := range firstNames {
+		ln := strings.ToLower(lastNames[n][0].(string))
+
+		payload = append(payload, ln+strings.Split(name[0].(string), " ")[0])
+	}
+
+	// Convert back to interface
+	t := toInterface(&payload)
+
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
+	clearColumn("APEX Paste!E2:E")
+	// Adding myIDFormat values to "APEX Paste!E:E"
+	sh.Update(client, SpreadsheetID, "APEX Paste!E2:E", "COLUMNS", t)
+
+	// Post TRUE to correct cell if myIDFormats match
+	masterMyCustomIDs := sh.Get(client, SpreadsheetID, "Master!Q2:Q")
+
+	payload2 := []string{}
+
+	for _, mID := range masterMyCustomIDs {
+		foundMatch := false
+		for _, aID := range payload {
+			if mID[0].(string) == aID {
+				foundMatch = true
+				break
+			}
+		}
+
+		if foundMatch == true {
+			payload2 = append(payload2, "")
+		} else {
+			payload2 = append(payload2, "FALSE")
+		}
+	}
+
+	u := make([]interface{}, len(payload2))
+	for i, v := range payload2 {
+		u[i] = v
+	}
+
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
+	clearColumn("Master!L2:L")
+
+	// Post False if the student is not found in the APEX list
+	sh.Update(client, SpreadsheetID, "Master!L2:L", "COLUMNS", u)
+
+	fmt.Println("Done checking if students are in the APEX List.")
+}
+
+func checkInIEP(wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Println("Checking if students have an IEP or 504...")
+
+	// Get Google Client
+	client := auth.Authorize()
+
+	readRange := "IEP List!B10:B"
+	vals := sh.Get(client, SpreadsheetID, readRange)
+
+	payload := []string{}
+
+	// Removing commas and spaces
+	for _, name := range vals {
+
+		ln := strings.TrimSpace(strings.Split(name[0].(string), ",")[0])
+		fn := strings.TrimSpace(strings.Split(name[0].(string), ",")[1])
+		myIDFormat := strings.ToLower(ln) + fn
+
+		payload = append(payload, myIDFormat)
+	}
+
+	// Convert back to interface
+	s := toInterface(&payload)
+
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
+	clearColumn("IEP List!S10:S")
+
+	// Adding myIDFormat values to range
+	sh.Update(client, SpreadsheetID, "IEP List!S10:S", "COLUMNS", s)
+
+	masterMyCustomIDs := sh.Get(client, SpreadsheetID, "Master!Q2:Q")
+
+	payload2 := []string{}
+
+	for _, mID := range masterMyCustomIDs {
+		foundMatch := false
+		for _, IEPID := range payload {
+			if mID[0].(string) == IEPID {
+				foundMatch = true
+				break
+			}
+		}
+
+		if foundMatch == true {
+			payload2 = append(payload2, "TRUE")
+		} else {
+			payload2 = append(payload2, "")
+		}
+	}
+
+	t := make([]interface{}, len(payload2))
+	for i, v := range payload2 {
+		t[i] = v
+	}
+
+	// Clear columns.  If range is blank, will output "No Data Found." to the console
+	clearColumn("Master!J2:J")
+
+	// Post TRUE to cells corresponging with students who have an IEP
+	sh.Update(client, SpreadsheetID, "Master!J2:J", "COLUMNS", t)
+
+	fmt.Println("Done checking if students have an IEP.")
+}
+
+func switchGradeLevel(name string) string {
+	switch name {
+	case "AP Physics", "Physics", "APEX Physics":
+		return "12"
+	case "APEX Honors Chemistry", "APEX Chemistry":
+		return "11"
+	case "APEX Physical Science":
+		return "9"
+	default:
+		return ""
+	}
+}
+
+func clearColumn(writeRange string) {
+	// Get Google Client
+	client := auth.Authorize()
+	vals := sh.Get(client, SpreadsheetID, writeRange)
+
+	payload := make([]string, len(vals), len(vals))
+
+	// Convert back to interface
+	t := toInterface(&payload)
+
+	// Clearning the cells
+	sh.Update(client, SpreadsheetID, writeRange, "COLUMNS", t)
+}
+
+func toInterface(payload *[]string) []interface{} {
+	s := make([]interface{}, len(*payload))
+	for i, v := range *payload {
+		s[i] = v
+	}
+	return s
+}
+
+func addSunguard(wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Println("Adding students from Sunguard list who are not in Classroom...")
+	// Get Google Client
+	client := auth.Authorize()
+	// Get the pasted in values from Sunguard
+	readRange := "Sunguard Paste!E2:E"
+	sunCusIDS := sh.Get(client, SpreadsheetID, readRange)
+
+	// Post TRUE to correct cell if myIDFormats match
+	masterMyCustomIDs := sh.Get(client, SpreadsheetID, "Master!Q2:Q")
+
+	for s, sID := range sunCusIDS {
+		foundMatch := false
+		for _, mID := range masterMyCustomIDs {
+			if mID[0].(string) == sID[0].(string) {
+				foundMatch = true
+				break
+			}
+		}
+
+		payload := []string{}
+		fn := []string{}
+		ln := []string{}
+		if foundMatch == false {
+			payload = append(payload, sID[0].(string))
+			name := names[s]
+			nameSplit := strings.SplitAfter(name[0].(string), ",")
+			nameSplit[0] = strings.TrimRight(nameSplit[0], ",")
+			nameSplit[0] = strings.TrimSpace(nameSplit[0])
+			nameSplit[1] = strings.TrimSpace(nameSplit[1])
+			nameSplit[1] = strings.SplitAfter(nameSplit[1], " ")[0]
+			ln = append(ln, nameSplit[0])
+			fn = append(fn, nameSplit[1])
+		}
+	}
+
+	if len(payload) > 0 {
+		values := make([][]interface{}, len(payload))
+		for s, student := range payload {
+			values[s] = []interface{}{fn[s], ln[s], "", "", "", "", "", "", "", "", "", "", "FALSE", "", "", "", student}
+
+		}
+		fmt.Printf("Number of missing students from Sunguard List: %d\n", len(payload))
+		/* vals := toInterface(&payload) */
+		for i := 0; i < len(values); i++ {
+			sh.Append(client, SpreadsheetID, "Master!Q1:Q", "ROWS", values[i])
+		}
+	} else {
+		fmt.Println("No students are missing from Sunguard.")
+	}
+}
+
+// EOF
