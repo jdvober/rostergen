@@ -13,8 +13,8 @@ import (
 	"github.com/jdvober/goClassroomTools/students"
 	stu "github.com/jdvober/goClassroomTools/students"
 	auth "github.com/jdvober/goGoogleAuth"
-	sh "github.com/jdvober/goSheets/values"
-)
+	ssVals "github.com/jdvober/goSheets/values"
+	/* ss "github.com/jdvober/goSheets/spreadsheets" */)
 
 /*
 TODO:
@@ -55,6 +55,7 @@ func main() {
 	apexData := getAPEXData()
 	sunguardData := getSunguardData()
 	iepData := getIEPData()
+	parentEmailData := getParentEmails()
 
 	for _, cd := range classroomData {
 		addToRoster(cd)
@@ -68,6 +69,9 @@ func main() {
 	for _, iepd := range iepData {
 		addToRoster(iepd)
 	}
+	for _, ped := range parentEmailData {
+		addToRoster(ped)
+	}
 
 	/* fmt.Println("Number of students on roster: ", len(Roster))
 	 * count := 0
@@ -79,9 +83,9 @@ func main() {
 	 *     count++
 	 * } */
 
-	fmt.Println("\nPosting to sheet...")
+	fmt.Printf("\nPosting to sheet...")
 	PostToSheet(Roster)
-	fmt.Println(" Done")
+	fmt.Printf(" Done")
 }
 
 func getClassroomData() []map[string]string {
@@ -112,13 +116,14 @@ func getClassroomData() []map[string]string {
 				googleStudentProfiles[Counter] = []interface{}{g.First, g.Last, g.Email, course.Name, g.Id, course.Id}
 				cID := makeCustomID(g.Last, g.First)
 				profile := map[string]string{
-					"Last":      g.Last,
-					"First":     g.First,
-					"GoogleID":  g.Id,
-					"CustomID":  cID,
-					"Email":     g.Email,
-					"Course":    course.Name,
-					"Classroom": "TRUE",
+					"Last":           g.Last,
+					"First":          g.First,
+					"GoogleID":       g.Id,
+					"GoogleCourseID": course.Id,
+					"CustomID":       cID,
+					"Email":          g.Email,
+					"Course":         course.Name,
+					"Classroom":      "TRUE",
 				}
 				data = append(data, profile)
 				/* log.Printf("\nSending %s %s's profile to addToRoster()\n", g.First, g.Last)
@@ -142,8 +147,8 @@ func getAPEXData() []map[string]string {
 	firstNameRange := "APEX Paste!A2:A"
 	lastNameRange := "APEX Paste!B2:B"
 
-	firstNames := sh.Get(client, SpreadsheetID, firstNameRange)
-	lastNames := sh.Get(client, SpreadsheetID, lastNameRange)
+	firstNames := ssVals.Get(client, SpreadsheetID, firstNameRange)
+	lastNames := ssVals.Get(client, SpreadsheetID, lastNameRange)
 
 	// Removing commas and spaces
 	for n := range firstNames {
@@ -173,7 +178,7 @@ func getSunguardData() []map[string]string {
 	client := auth.Authorize()
 	// Get the pasted in values from Sunguard
 	readRange := "Sunguard Paste!A2:D"
-	vals := sh.Get(client, SpreadsheetID, readRange)
+	vals := ssVals.Get(client, SpreadsheetID, readRange)
 
 	fullNames := []string{}
 	sunguardIDs := []string{}
@@ -274,7 +279,7 @@ func getIEPData() []map[string]string {
 	client := auth.Authorize()
 
 	readRange := "IEP List!B10:B"
-	vals := sh.Get(client, SpreadsheetID, readRange)
+	vals := ssVals.Get(client, SpreadsheetID, readRange)
 
 	data := []map[string]string{}
 
@@ -290,6 +295,33 @@ func getIEPData() []map[string]string {
 			"First":    fn,
 			"CustomID": cID,
 			"IEP":      "TRUE",
+		}
+		data = append(data, profile)
+	}
+
+	fmt.Println(" Done")
+	return data
+}
+
+func getParentEmails() []map[string]string {
+	fmt.Printf("\nGetting Parent Emails...")
+
+	// Get Google Client
+	client := auth.Authorize()
+
+	readRange := "Copy of Master!J2:R"
+	vals := ssVals.Get(client, SpreadsheetID, readRange)
+
+	data := []map[string]string{}
+
+	for _, email := range vals {
+
+		parentEmail := email[0].(string)
+		cID := email[8].(string)
+
+		profile := map[string]string{
+			"CustomID":    cID,
+			"ParentEmail": parentEmail,
 		}
 		data = append(data, profile)
 	}
@@ -365,10 +397,11 @@ func PostToSheet(r map[string]map[string]string) {
 
 	// Save old customIDs and Dates for comparison later
 	readRange := "Copy of Master!R2:S"
-	oldIDsAndDates := sh.Get(client, SpreadsheetID, readRange)
+	oldIDsAndDates := ssVals.Get(client, SpreadsheetID, readRange)
+	/* savedParentEmails := ssVals.Get(client, SpreadsheetID, "Copy of Master!J2:J") */
 
 	// Clear the sheet
-	sh.Clear(client, SpreadsheetID, writeRange, "ROWS")
+	ssVals.Clear(client, SpreadsheetID, writeRange, "ROWS")
 
 	values := make([][]interface{}, len(r))
 
@@ -376,6 +409,7 @@ func PostToSheet(r map[string]map[string]string) {
 	j := 0
 	ct := time.Now()
 	currentTime := ct.Format("01.02.2006 15:04:05")
+
 	for _, s := range r {
 		// If s["CustomID"] is in oldIDsAndDates
 		for _, i := range oldIDsAndDates {
@@ -397,7 +431,7 @@ func PostToSheet(r map[string]map[string]string) {
 		}
 		j++
 	}
-	sh.BatchUpdate(client, SpreadsheetID, writeRange, "ROWS", values)
+	ssVals.BatchUpdate(client, SpreadsheetID, writeRange, "ROWS", values)
 }
 func makeCustomID(last string, first string) string {
 	return strings.Join([]string{strings.ToLower(last), strings.ToUpper(first)}, "")
