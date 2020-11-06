@@ -14,6 +14,7 @@ import (
 	stu "github.com/jdvober/goClassroomTools/students"
 	auth "github.com/jdvober/goGoogleAuth"
 	ssVals "github.com/jdvober/goSheets/values"
+	"google.golang.org/api/people/v1"
 	/* ss "github.com/jdvober/goSheets/spreadsheets" */)
 
 /*
@@ -50,29 +51,31 @@ func main() {
 
 	log.SetOutput(file)
 
-	// Get data sources
-	classroomData := getClassroomData()
-	apexData := getAPEXData()
-	sunguardData := getSunguardData()
-	iepData := getIEPData()
-	parentEmailData := getParentEmails()
+	/*
+		// Get data sources
+		classroomData := getClassroomData()
+		apexData := getAPEXData()
+		sunguardData := getSunguardData()
+		iepData := getIEPData()
+		parentEmailData := getParentEmails()
 
-	for _, cd := range classroomData {
-		addToRoster(cd)
-	}
-	for _, ad := range apexData {
-		addToRoster(ad)
-	}
-	for _, sd := range sunguardData {
-		addToRoster(sd)
-	}
-	for _, iepd := range iepData {
-		addToRoster(iepd)
-	}
-	for _, ped := range parentEmailData {
-		addToRoster(ped)
-	}
-
+		for _, cd := range classroomData {
+			addToRoster(cd)
+		}
+		for _, ad := range apexData {
+			addToRoster(ad)
+		}
+		for _, sd := range sunguardData {
+			addToRoster(sd)
+		}
+		for _, iepd := range iepData {
+			addToRoster(iepd)
+		}
+		for _, ped := range parentEmailData {
+			addToRoster(ped)
+		}
+	*/
+	updateContacts()
 	/* fmt.Println("Number of students on roster: ", len(Roster))
 	 * count := 0
 	 * for _, student := range Roster {
@@ -83,8 +86,8 @@ func main() {
 	 *     count++
 	 * } */
 
-	fmt.Printf("\nPosting to sheet...")
-	PostToSheet(Roster)
+	/* fmt.Printf("\nPosting to sheet...") */
+	/* PostToSheet(Roster) */
 	fmt.Printf(" Done")
 }
 
@@ -95,18 +98,18 @@ func getClassroomData() []map[string]string {
 
 	client := auth.Authorize()
 	courses := co.List(client)
-	var studentProfiles []students.Profile
+	var spreadsheetProfiles []students.Profile
 
 	for _, course := range courses {
 		studentList := stu.List(client, course.Id) // CourseId Email Id First Last
 		for _, student := range studentList {
 
-			studentProfiles = append(studentProfiles, student)
+			spreadsheetProfiles = append(spreadsheetProfiles, student)
 		}
 	}
 
 	// Get all courses
-	googleStudentProfiles := make([][]interface{}, len(studentProfiles))
+	googleStudentProfiles := make([][]interface{}, len(spreadsheetProfiles))
 
 	Counter := 0
 	for _, course := range courses {
@@ -309,7 +312,7 @@ func getParentEmails() []map[string]string {
 	// Get Google Client
 	client := auth.Authorize()
 
-	readRange := "Copy of Master!J2:R"
+	readRange := "Master!J2:R"
 	vals := ssVals.Get(client, SpreadsheetID, readRange)
 
 	data := []map[string]string{}
@@ -328,6 +331,204 @@ func getParentEmails() []map[string]string {
 
 	fmt.Println(" Done")
 	return data
+}
+
+func updateContacts() {
+	fmt.Printf("\nUpdating Google Contacts for email lists...")
+
+	client := auth.Authorize()
+	srv, err := people.New(client)
+	if err != nil {
+		log.Fatalf("Unable to create people Client %v", err)
+	}
+
+	/* contactGroups := map[string]string{
+	 *     "APEX":                         "contactGroups/173aa8400bbdd3b1",
+	 *     "APEXChemistry":                "contactGroups/2ae069080f05aacf",
+	 *     "APEXPhysicalScience":          "contactGroups/220329b90ad8cae7",
+	 *     "APEXPhysics":                  "contactGroups/6a81e9bc0a416f52",
+	 *     "APEXHonorsChemistry2020_2021": "contactGroups/6e054fb98b8ec269",
+	 * } */
+
+	// Compare Master to each contactGroup the student should be a part of (based on class, etc.)
+
+	cIDsMaster := ssVals.Get(client, SpreadsheetID, "Master!R2:R")
+	classes := ssVals.Get(client, SpreadsheetID, "Master!D2:D")
+	firstNames := ssVals.Get(client, SpreadsheetID, "Master!A2:A")
+	lastNames := ssVals.Get(client, SpreadsheetID, "Master!B2:B")
+	spreadsheetProfiles := map[string]map[string]string{}
+	contactsProfiles := map[string]map[string]string{}
+
+	// Make initial profiles from master list so you have something to compare the values returned from Contacts to
+Loop:
+	for c, mID := range cIDsMaster {
+		var cID string
+		var class string
+		var first string
+		var last string
+
+		if len(classes[c]) > 0 {
+			class = classes[c][0].(string)
+			cID = mID[0].(string)
+			first = firstNames[c][0].(string)
+			last = lastNames[c][0].(string)
+
+		} else {
+			cID = mID[0].(string)
+			continue Loop
+		}
+
+		spreadsheetProfiles[cID] = map[string]string{
+			"id":    cID,
+			"class": class,
+			"first": first,
+			"last":  last,
+			"full":  first + " " + last,
+		}
+
+		fmt.Printf("\n%+v", spreadsheetProfiles[cID])
+	}
+
+	// Get all students that are currently in my contacts, with their names and contactGroups
+
+	r, err := srv.People.Connections.List("people/me").PageSize(1000).
+		PersonFields("names,memberships").Do()
+	if err != nil {
+		log.Fatalf("Unable to retrieve people. %v", err)
+	}
+	fmt.Printf("\nThere are currently %d people on your contacts list\n", len(r.Connections))
+	for _, connection := range r.Connections {
+		// Construct customID format lastFIRST
+		if len(connection.Names) > 0 {
+			fmt.Printf("\n%s is listed as a Google Contact\n", connection.Names[0].DisplayName)
+			cID := strings.ToLower(connection.Names[0].FamilyName) + strings.ToUpper(connection.Names[0].GivenName)
+
+			contactGroupResourceName := connection.Memberships[1].ContactGroupMembership.ContactGroupResourceName
+			classFromContacts, err := srv.ContactGroups.Get(contactGroupResourceName).Do()
+			if err != nil {
+				log.Printf("Error getting name of list student is in on Google Contacts")
+			}
+			contactsProfiles[cID] = map[string]string{
+				"id":           cID,
+				"displayName":  connection.Names[0].DisplayName,
+				"first":        connection.Names[0].GivenName,
+				"last":         connection.Names[0].FamilyName,
+				"resourceName": connection.ResourceName,
+				"classID":      connection.Memberships[1].ContactGroupMembership.ContactGroupResourceName,
+				"class":        classFromContacts.Name,
+			}
+			/*             fmt.Printf("\nAssigning class for %s\n", mssToJSON(contactsProfiles[cID]))
+			 *             for _, cl := range connection.Memberships {
+			 *                 fmt.Printf("\nSwitch %s\n", cl.ContactGroupMembership.ContactGroupResourceName)
+			 *                 switch cl.ContactGroupMembership.ContactGroupResourceName {
+			 *                 case "contactGroups/173aa8400bbdd3b1":
+			 *                     contactsProfiles[cID]["APEX"] = "contactGroups/173aa8400bbdd3b1"
+			 *                     fallthrough
+			 *                 case "contactGroups/2ae069080f05aacf":
+			 *                     contactsProfiles[cID]["classID"] = "contactGroups/2ae069080f05aacf"
+			 *                     contactsProfiles[cID]["class"] = "APEX Chemistry"
+			 *                     fallthrough
+			 *                 case "contactGroups/6e054fb98b8ec269":
+			 *                     contactsProfiles[cID]["classID"] = "contactGroups/6e054fb98b8ec269"
+			 *                     contactsProfiles[cID]["class"] = "APEX Honors Chemistry"
+			 *                     fallthrough
+			 *                 case "contactGroups/6a81e9bc0a416f52":
+			 *                     contactsProfiles[cID]["classID"] = "contactGroups/6a81e9bc0a416f52"
+			 *                     contactsProfiles[cID]["class"] = "APEX Physics"
+			 *                     fallthrough
+			 *                 case "contactGroups/220329b90ad8cae7":
+			 *                     contactsProfiles[cID]["classID"] = "contactGroups/220329b90ad8cae7"
+			 *                     contactsProfiles[cID]["class"] = "APEX Physical Science"
+			 *                 default:
+			 *                     contactsProfiles[cID]["classID"] = ""
+			 *                     contactsProfiles[cID]["class"] = ""
+			 *
+			 *                 } */
+			/* } */
+
+		}
+	}
+
+	for _, ssProfile := range spreadsheetProfiles {
+		for _, contactsProfile := range contactsProfiles {
+			fmt.Printf("\nDoes ssProfile['id']: %s match contactsProfile['id']: %s?\n", ssProfile["id"], contactsProfile["id"])
+			if ssProfile["id"] == contactsProfile["id"] {
+				// FOUND A MATCH!
+				fmt.Printf("YES!  They match!\n")
+				fmt.Printf("ssProfile['class']: %s\tcontactsProfile['class']: %s\n", ssProfile["class"], contactsProfile["class"])
+				// Check what classes they are in.  If it matches, good, else update
+				switch contactsProfile["class"] {
+				case "APEX Chemistry", "APEX Honors Chemistry", "APEX Physics", "APEX Physical Science":
+					if ssProfile["class"] == contactsProfile["class"] {
+						fmt.Printf("%s is listed as a member of %q on both the Spreadsheet and in Google Contacts.\n", ssProfile["full"], ssProfile["class"])
+					} else {
+						// Classes do not match.  Add to Correct contacts list and remove from other list IF NOT AP Physics or Physics!!!
+						fmt.Printf("A match was found for %s %s, but their listed classes do not match up!\n", contactsProfile["First"], contactsProfile["Last"])
+						// addToContacts(resourceNamePerson, resourceNameClass)
+						// removeFromContacts(resourceNamePerson, resourceNameClass)
+					}
+				default:
+					fmt.Printf("\nSomething went wrong.")
+				}
+			} else {
+				// No Match Found, add to contacts
+				fmt.Printf("%s %s not found in Contacts.  Adding to proper classes...\n", ssProfile["first"], ssProfile["last"])
+				// Get resourceName of student and resourceName of Class you want to add them to in Google Contacts
+
+				res, err := srv.People.SearchDirectoryPeople().Query(ssProfile["full"]).ReadMask("names").Sources("DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE").Do()
+				if err != nil {
+					log.Printf("There was an error with your query.")
+				}
+				fmt.Printf("%s", res.People.Names[0].DisplayName)
+			}
+		}
+	}
+
+	// Check to see if they are in APEX Group
+
+	// Check to see if they are in their required class group
+
+	// Make a customID for the name returned from the contactGroup.
+	// If they are found, determine if they should be in that group.
+	// If yes, all good.
+	// If no, remove them.
+	// If they are NOT found, determine if they SHOULD be in that group.
+	// If yes, add them.
+	// If no, add good.
+
+	/*
+		r, err := srv.People.Connections.List("people/me").PageSize(1000).
+			PersonFields("names,emailAddresses").Do()
+		if err != nil {
+			log.Fatalf("Unable to retrieve people. %v", err)
+		}
+		if len(r.Connections) > 0 {
+			fmt.Print("\nListing first 1000 connection names:\n")
+			for _, c := range r.Connections {
+
+				names := c.Names
+				resourceName := c.ResourceName
+				if len(names) > 0 {
+					name := names[0].DisplayName
+
+					var rb people.ModifyContactGroupMembersRequest = people.ModifyContactGroupMembersRequest{
+						ResourceNamesToAdd: []string{resourceName},
+					}
+
+					rb.MarshalJSON()
+					fmt.Printf("\nAdding %s (resourceName: %q) to contact group %s", name, resourceName, contactGroup)
+					// Add to Necessary Contact Groups
+					srv.ContactGroups.Members.Modify(contactGroup, &rb).Do()
+					if err != nil {
+						log.Println("An error occured when attempting to modify the Google Contacts Group %q with resourceName %q\n", contactGroup, resourceName)
+					}
+				}
+			}
+		} else {
+			fmt.Print("No connections found.")
+		}
+	*/
+
 }
 
 func addToRoster(p map[string]string) {
@@ -387,18 +588,37 @@ func addToRoster(p map[string]string) {
 	// if no, add all info
 	// if yes, add info that is missing
 }
+func addToContacts(resourceNamePerson string, resourceNameContactGroup string) {
+	client := auth.Authorize()
+	srv, err := people.New(client)
+	if err != nil {
+		log.Fatalf("Unable to create people Client %v", err)
+	}
+
+	var rb people.ModifyContactGroupMembersRequest = people.ModifyContactGroupMembersRequest{
+		ResourceNamesToAdd: []string{resourceNamePerson},
+	}
+
+	rb.MarshalJSON()
+	fmt.Printf("\nAdding resourceName: %q to contact group %s", resourceNamePerson, resourceNameContactGroup)
+	// Add to Necessary Contact Groups
+	srv.ContactGroups.Members.Modify(resourceNameContactGroup, &rb).Do()
+	if err != nil {
+		log.Printf("An error occured when attempting to modify the Google Contacts Group %q with resourceName %q\n", resourceNameContactGroup, resourceNamePerson)
+	}
+}
 
 // PostToSheet takes in a roster (a map of maps) and posts it Row-wise to a specified Google Sheet
 func PostToSheet(r map[string]map[string]string) {
 	// Post to Google Sheets
 	client := auth.Authorize()
 
-	writeRange := "Copy of Master!A2:S"
+	writeRange := "Master!A2:S"
 
 	// Save old customIDs and Dates for comparison later
-	readRange := "Copy of Master!R2:S"
+	readRange := "Master!R2:S"
 	oldIDsAndDates := ssVals.Get(client, SpreadsheetID, readRange)
-	/* savedParentEmails := ssVals.Get(client, SpreadsheetID, "Copy of Master!J2:J") */
+	/* savedParentEmails := ssVals.Get(client, SpreadsheetID, "Master!J2:J") */
 
 	// Clear the sheet
 	ssVals.Clear(client, SpreadsheetID, writeRange, "ROWS")
