@@ -51,31 +51,29 @@ func main() {
 
 	log.SetOutput(file)
 
-	/*
-		// Get data sources
-		classroomData := getClassroomData()
-		apexData := getAPEXData()
-		sunguardData := getSunguardData()
-		iepData := getIEPData()
-		parentEmailData := getParentEmails()
+	// Get data sources
+	classroomData := getClassroomData()
+	apexData := getAPEXData()
+	sunguardData := getSunguardData()
+	iepData := getIEPData()
+	parentEmailData := getParentEmails()
 
-		for _, cd := range classroomData {
-			addToRoster(cd)
-		}
-		for _, ad := range apexData {
-			addToRoster(ad)
-		}
-		for _, sd := range sunguardData {
-			addToRoster(sd)
-		}
-		for _, iepd := range iepData {
-			addToRoster(iepd)
-		}
-		for _, ped := range parentEmailData {
-			addToRoster(ped)
-		}
-	*/
-	updateContacts()
+	for _, cd := range classroomData {
+		addToRoster(cd)
+	}
+	for _, ad := range apexData {
+		addToRoster(ad)
+	}
+	for _, sd := range sunguardData {
+		addToRoster(sd)
+	}
+	for _, iepd := range iepData {
+		addToRoster(iepd)
+	}
+	for _, ped := range parentEmailData {
+		addToRoster(ped)
+	}
+	/* updateContacts() */
 	/* fmt.Println("Number of students on roster: ", len(Roster))
 	 * count := 0
 	 * for _, student := range Roster {
@@ -86,8 +84,8 @@ func main() {
 	 *     count++
 	 * } */
 
-	/* fmt.Printf("\nPosting to sheet...") */
-	/* PostToSheet(Roster) */
+	fmt.Printf("\nPosting to sheet...")
+	PostToSheet(Roster)
 	fmt.Printf(" Done")
 }
 
@@ -342,6 +340,9 @@ func updateContacts() {
 		log.Fatalf("Unable to create people Client %v", err)
 	}
 
+	/* ctx := context.Background()
+	 * peopleService, err := people.NewService(ctx) */
+
 	/* contactGroups := map[string]string{
 	 *     "APEX":                         "contactGroups/173aa8400bbdd3b1",
 	 *     "APEXChemistry":                "contactGroups/2ae069080f05aacf",
@@ -451,7 +452,7 @@ Loop:
 
 	for _, ssProfile := range spreadsheetProfiles {
 		for _, contactsProfile := range contactsProfiles {
-			fmt.Printf("\nDoes ssProfile['id']: %s match contactsProfile['id']: %s?\n", ssProfile["id"], contactsProfile["id"])
+			fmt.Printf("\n\nDoes ssProfile['id']: %s match contactsProfile['id']: %s?\n", ssProfile["id"], contactsProfile["id"])
 			if ssProfile["id"] == contactsProfile["id"] {
 				// FOUND A MATCH!
 				fmt.Printf("YES!  They match!\n")
@@ -475,11 +476,12 @@ Loop:
 				fmt.Printf("%s %s not found in Contacts.  Adding to proper classes...\n", ssProfile["first"], ssProfile["last"])
 				// Get resourceName of student and resourceName of Class you want to add them to in Google Contacts
 
-				res, err := srv.People.SearchDirectoryPeople().Query(ssProfile["full"]).ReadMask("names").Sources("DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE").Do()
+				res, err := srv.People.ListDirectoryPeople().MergeSources("DIRECTORY_MERGE_SOURCE_TYPE_CONTACT").ReadMask("names").Sources("DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE").Do()
 				if err != nil {
-					log.Printf("There was an error with your query.")
+					log.Printf("%s\n", err)
 				}
-				fmt.Printf("%s", res.People.Names[0].DisplayName)
+				fmt.Printf("\nres = \n%v", res)
+
 			}
 		}
 	}
