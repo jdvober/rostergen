@@ -9,7 +9,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/jdvober/bak/goClassroomTools/students"
 	"github.com/jdvober/gauth"
 	"github.com/jdvober/gclass"
 	"github.com/jdvober/gsheets"
@@ -40,7 +39,6 @@ var keyList []string = []string{
 }
 
 func main() {
-
 	// Create log file
 	// If the file doesn't exist, create it or append to the file
 	file, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
@@ -94,13 +92,12 @@ func getClassroomData() []map[string]string {
 	data := []map[string]string{}
 
 	client := gauth.Authorize()
-	courses := gclass.List(client)
-	var spreadsheetProfiles []students.Profile
+	courses := gclass.ListCourses(client)
+	var spreadsheetProfiles []gclass.Profile
 
 	for _, course := range courses {
 		studentList := gclass.ListStudents(client, course.Id) // CourseId Email Id First Last
 		for _, student := range studentList {
-
 			spreadsheetProfiles = append(spreadsheetProfiles, student)
 		}
 	}
@@ -622,7 +619,7 @@ func PostToSheet(r map[string]map[string]string) {
 	/* savedParentEmails := gsheets.GetValues(client, SpreadsheetID, "Master!J2:J") */
 
 	// Clear the sheet
-	gsheets.Clear(client, SpreadsheetID, writeRange, "ROWS")
+	gsheets.Clear(client, SpreadsheetID, writeRange)
 
 	values := make([][]interface{}, len(r))
 
