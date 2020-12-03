@@ -9,13 +9,12 @@ import (
 	"time"
 	"unicode"
 
-	co "github.com/jdvober/goClassroomTools/courses"
-	"github.com/jdvober/goClassroomTools/students"
-	stu "github.com/jdvober/goClassroomTools/students"
-	auth "github.com/jdvober/goGoogleAuth"
-	ssVals "github.com/jdvober/goSheets/values"
+	"github.com/jdvober/bak/goClassroomTools/students"
+	"github.com/jdvober/gauth"
+	"github.com/jdvober/gclass"
+	"github.com/jdvober/gsheets"
 	"google.golang.org/api/people/v1"
-	/* ss "github.com/jdvober/goSheets/spreadsheets" */)
+)
 
 /*
 TODO:
@@ -94,12 +93,12 @@ func getClassroomData() []map[string]string {
 
 	data := []map[string]string{}
 
-	client := auth.Authorize()
-	courses := co.List(client)
+	client := gauth.Authorize()
+	courses := gclass.List(client)
 	var spreadsheetProfiles []students.Profile
 
 	for _, course := range courses {
-		studentList := stu.List(client, course.Id) // CourseId Email Id First Last
+		studentList := gclass.ListStudents(client, course.Id) // CourseId Email Id First Last
 		for _, student := range studentList {
 
 			spreadsheetProfiles = append(spreadsheetProfiles, student)
@@ -111,7 +110,7 @@ func getClassroomData() []map[string]string {
 
 	Counter := 0
 	for _, course := range courses {
-		students := stu.List(client, course.Id)
+		students := gclass.ListStudents(client, course.Id)
 		for _, g := range students {
 			if course.Name != "Test Class" {
 				googleStudentProfiles[Counter] = []interface{}{g.First, g.Last, g.Email, course.Name, g.Id, course.Id}
@@ -143,13 +142,13 @@ func getAPEXData() []map[string]string {
 	data := []map[string]string{}
 
 	// Get Google Client
-	client := auth.Authorize()
+	client := gauth.Authorize()
 	// Get the pasted in values from Sunguard
 	firstNameRange := "APEX Paste!A2:A"
 	lastNameRange := "APEX Paste!B2:B"
 
-	firstNames := ssVals.Get(client, SpreadsheetID, firstNameRange)
-	lastNames := ssVals.Get(client, SpreadsheetID, lastNameRange)
+	firstNames := gsheets.GetValues(client, SpreadsheetID, firstNameRange)
+	lastNames := gsheets.GetValues(client, SpreadsheetID, lastNameRange)
 
 	// Removing commas and spaces
 	for n := range firstNames {
@@ -176,10 +175,10 @@ func getSunguardData() []map[string]string {
 	data := []map[string]string{}
 
 	// Get Google Client
-	client := auth.Authorize()
+	client := gauth.Authorize()
 	// Get the pasted in values from Sunguard
 	readRange := "Sunguard Paste!A2:D"
-	vals := ssVals.Get(client, SpreadsheetID, readRange)
+	vals := gsheets.GetValues(client, SpreadsheetID, readRange)
 
 	fullNames := []string{}
 	sunguardIDs := []string{}
@@ -277,10 +276,10 @@ func getIEPData() []map[string]string {
 	fmt.Printf("\nChecking if students have an IEP or 504...")
 
 	// Get Google Client
-	client := auth.Authorize()
+	client := gauth.Authorize()
 
 	readRange := "IEP List!B10:B"
-	vals := ssVals.Get(client, SpreadsheetID, readRange)
+	vals := gsheets.GetValues(client, SpreadsheetID, readRange)
 
 	data := []map[string]string{}
 
@@ -308,10 +307,10 @@ func getParentEmails() []map[string]string {
 	fmt.Printf("\nGetting Parent Emails...")
 
 	// Get Google Client
-	client := auth.Authorize()
+	client := gauth.Authorize()
 
 	readRange := "Master!J2:R"
-	vals := ssVals.Get(client, SpreadsheetID, readRange)
+	vals := gsheets.GetValues(client, SpreadsheetID, readRange)
 
 	data := []map[string]string{}
 
@@ -334,7 +333,7 @@ func getParentEmails() []map[string]string {
 func updateContacts() {
 	fmt.Printf("\nUpdating Google Contacts for email lists...")
 
-	client := auth.Authorize()
+	client := gauth.Authorize()
 	srv, err := people.New(client)
 	if err != nil {
 		log.Fatalf("Unable to create people Client %v", err)
@@ -353,10 +352,10 @@ func updateContacts() {
 
 	// Compare Master to each contactGroup the student should be a part of (based on class, etc.)
 
-	cIDsMaster := ssVals.Get(client, SpreadsheetID, "Master!R2:R")
-	classes := ssVals.Get(client, SpreadsheetID, "Master!D2:D")
-	firstNames := ssVals.Get(client, SpreadsheetID, "Master!A2:A")
-	lastNames := ssVals.Get(client, SpreadsheetID, "Master!B2:B")
+	cIDsMaster := gsheets.GetValues(client, SpreadsheetID, "Master!R2:R")
+	classes := gsheets.GetValues(client, SpreadsheetID, "Master!D2:D")
+	firstNames := gsheets.GetValues(client, SpreadsheetID, "Master!A2:A")
+	lastNames := gsheets.GetValues(client, SpreadsheetID, "Master!B2:B")
 	spreadsheetProfiles := map[string]map[string]string{}
 	contactsProfiles := map[string]map[string]string{}
 
@@ -591,7 +590,7 @@ func addToRoster(p map[string]string) {
 	// if yes, add info that is missing
 }
 func addToContacts(resourceNamePerson string, resourceNameContactGroup string) {
-	client := auth.Authorize()
+	client := gauth.Authorize()
 	srv, err := people.New(client)
 	if err != nil {
 		log.Fatalf("Unable to create people Client %v", err)
@@ -613,17 +612,17 @@ func addToContacts(resourceNamePerson string, resourceNameContactGroup string) {
 // PostToSheet takes in a roster (a map of maps) and posts it Row-wise to a specified Google Sheet
 func PostToSheet(r map[string]map[string]string) {
 	// Post to Google Sheets
-	client := auth.Authorize()
+	client := gauth.Authorize()
 
 	writeRange := "Master!A2:S"
 
 	// Save old customIDs and Dates for comparison later
 	readRange := "Master!R2:S"
-	oldIDsAndDates := ssVals.Get(client, SpreadsheetID, readRange)
-	/* savedParentEmails := ssVals.Get(client, SpreadsheetID, "Master!J2:J") */
+	oldIDsAndDates := gsheets.GetValues(client, SpreadsheetID, readRange)
+	/* savedParentEmails := gsheets.GetValues(client, SpreadsheetID, "Master!J2:J") */
 
 	// Clear the sheet
-	ssVals.Clear(client, SpreadsheetID, writeRange, "ROWS")
+	gsheets.Clear(client, SpreadsheetID, writeRange, "ROWS")
 
 	values := make([][]interface{}, len(r))
 
@@ -653,7 +652,7 @@ func PostToSheet(r map[string]map[string]string) {
 		}
 		j++
 	}
-	ssVals.BatchUpdate(client, SpreadsheetID, writeRange, "ROWS", values)
+	gsheets.BatchUpdateValues(client, SpreadsheetID, writeRange, "ROWS", values)
 }
 func makeCustomID(last string, first string) string {
 	return strings.Join([]string{strings.ToLower(last), strings.ToUpper(first)}, "")
